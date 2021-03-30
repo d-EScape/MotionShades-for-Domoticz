@@ -1,5 +1,5 @@
 """
-<plugin key="MotionShades" name="Motion rolling shades by Coulisse" author="ESCape" version="2.0" externallink="https://github.com/d-EScape/MotionShades-for-Domoticz">
+<plugin key="MotionShades" name="Motion rolling shades by Coulisse" author="ESCape" version="2.1" externallink="https://github.com/d-EScape/MotionShades-for-Domoticz">
     <description>
         <h2>Motion rolling shades</h2><br/>
         See the current status of shades en control them from Domoticz. Requires a WiFi bridge for the shades and the motionblinds python module from https://github.com/starkillerOG/motion-blinds.
@@ -13,7 +13,8 @@
         </ul>
         <h3>Configuration</h3>
         The plugin needs to communicate to the wifi bridge for the motion (bi-directional) 433MHz controller, using a api key you can find in the official motion app. In the (configured!) app go to settings > about and tap the screen several times. It will show the api-key in a window called "reminder".
-        The status gets updated on every movement of the blinds. The forced update every [configurable] hours ensures that the battery level and signal level get updated even if the blinds never moved.
+        The status gets updated on every movement of the blinds.
+        The forced update every [configurable] hours ensures that the battery level and signal level get updated once in a while, even if the blinds never moved. Every 24 hours could be often enough for that purpose and probably saves batteries. 
     </description>
     <params>
         <param field="Address" label="WiFi bridge IP Address" width="200px"/>
@@ -53,39 +54,43 @@ class BasePlugin:
         self.updatefailed=False
         self.update_thread = threading.Thread(name="UpdateThread", target=BasePlugin.background_updater, args=(self,))
         return
-
-    def update_domoticz_blinds(self):
-        self.countdown=self.interval #reset the poll countdown when new info is received
-        for blind in self.gateway.device_list.values():
-            Domoticz.Debug("mac=" + str(blind.mac))
-            Domoticz.Debug("position=" + str(blind.position))
-            Domoticz.Debug("battery level=" + str(blind.battery_level))
-            Domoticz.Debug("battery voltage=" + str(blind.battery_voltage))
-            Domoticz.Debug("signal level=" + str(blind.RSSI) + " translates to " + str(rssi_to_signal(blind.RSSI)))
-            if blind.position == 100:
+        
+    class BlindHandler:
+    	#This wrapper class is needed to bind the callback to a specific blind, 
+    	#so not all blinds need to be updated every time a individual blind communicates
+        def __init__(self, unitid, thisblind):
+            self.myid=unitid
+            self.blind=thisblind
+            Domoticz.Debug("Created handler for: " + str(self.myid) + " and blind " + str(self.blind))
+            self.blind.Register_callback("1", self.update_handler)
+            Domoticz.Debug("Registered handler for " + str(self.myid) + ": " + str(self.update_handler))
+        
+        def _update_domoticz(self):
+            Domoticz.Debug("Update is for Domoticz unit: " + str(self.myid))
+            if self.blind.position == 100:
                 statevalue=1
-            elif blind.position > 0:
+            elif self.blind.position > 0:
                 statevalue=2
             else:
                 statevalue=0
-            Domoticz.Log("Updating blinds values for:" + str(blind.mac) + " to " + str(blind.position) + "%; battery voltage=" + str(blind.battery_voltage))
-            Devices[self.unit_fromb_blind[blind.mac]].Update(SignalLevel=rssi_to_signal(blind.RSSI), BatteryLevel=int(blind.battery_level), nValue=int(statevalue), sValue=str(blind.position))     
+            Domoticz.Log("Updating blinds values for:" + str(self.blind.mac) + " to " + str(self.blind.position) + "%; battery voltage=" + str(self.blind.battery_voltage))
+            Devices[self.myid].Update(SignalLevel=rssi_to_signal(self.blind.RSSI), BatteryLevel=int(self.blind.battery_level), nValue=int(statevalue), sValue=str(self.blind.position))     
 
-    def status_handler(self):
-        Domoticz.Debug("status handler called !!")
-        self.update_domoticz_blinds()
+        def update_handler(self):
+            self._update_domoticz()        
         
     def background_updater(self):
         #This is run in a separate thread, because a timeout on the bridge could block the plugin for 5 seconds per blind.
-        #We don't have to wait for the output, because the real values are send in a multicast massage that is handled by status_handler
+        #Besides, we don't have to wait for the output, because the real values are send in a multicast massage that is handled by update_handler for that blind
         Domoticz.Status("... Background updater thread starting")
         while self.updaterrunning:
             if self.timetoupdate:
-                Domoticz.Debug("Forcing blinds status update")
+                Domoticz.Debug("Starting forced update of all blinds")
                 self.timetoupdate=False
                 try:
-                    for blind in self.allblinds:
-                        self.allblinds[blind].Update()
+                    for unitid in self.allblinds:
+                        self.allblinds[unitid].blind.Update()
+                        Domoticz.Debug("Forcing blinds status update for " + str(self.allblinds[unitid].blind.mac))
                 except Exception as err:
                     Domoticz.Error("Error updating blind status: "+str(err))
                     self.updatefailed=True
@@ -95,36 +100,27 @@ class BasePlugin:
         if Parameters["Mode6"] != "0":
             Domoticz.Debugging(int(Parameters["Mode6"]))
             DumpConfigToLog()
-        Domoticz.Debug("onStart called with debugging on")
-        self.unit_fromb_blind={}
         self.allblinds={}
         self.interval=int(Parameters["Mode5"]) * 180 #how many heartbeats does 1 hour take? 20 seconds heartbeat = 3 per minute = 180 per hour
-        self.countdown=self.interval #update once when starting
+        self.countdown=self.interval
         self.motion_multicast = MotionMulticast()
         self.motion_multicast.Start_listen()
         self.gateway = MotionGateway(ip = Parameters["Address"], key = Parameters["Password"], multicast = self.motion_multicast)
         self.gateway.Update()
         for blind in self.gateway.device_list.values():
-#            blind.Update_from_cache()
             Domoticz.Debug(str(blind))
-#            Domoticz.Debug("battery_level=" + str(blind.battery_level))
             myunit=get_or_create_unit(blind.mac)
-            self.allblinds[myunit]=blind
-            self.unit_fromb_blind[blind.mac]=myunit
-            Domoticz.Debug("Register handler for " + str(myunit))
-            self.allblinds[myunit].Register_callback("1", self.status_handler)
-        Domoticz.Debug("Found: " + str(self.unit_fromb_blind))
+            self.allblinds[myunit]=self.BlindHandler(myunit, blind)
         self.update_thread.start()
         if Parameters["Mode6"] != "0":
-            Domoticz.Error("WARNING: using a faster hearbeat for debugging (20 times normal interval)")
+            Domoticz.Error("WARNING: using a faster heartbeat for debugging (20 times normal interval)")
             Domoticz.Heartbeat(1)
         else:
             Domoticz.Heartbeat(20)
         
     def onStop(self):
-        Domoticz.Debug("onStop called")
         self.motion_multicast.Stop_listen()
-        #wait for the update threads to end (thay can run for up to 5 seconds)
+        # wait for the background_updater thread to end (can run for up to 5 seconds per blind if timed-out!)
         self.updaterrunning=False
         self.update_thread.join()
 
@@ -137,11 +133,11 @@ class BasePlugin:
     def onCommand(self, Unit, Command, Level, Hue):
         Domoticz.Debug("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command) + "', Level: " + str(Level))
         if Command == "Off":
-            self.allblinds[Unit].Open()
+            self.allblinds[Unit].blind.Open()
         elif Command == "On":
-            self.allblinds[Unit].Close()
+            self.allblinds[Unit].blind.Close()
         elif Command == "Set Level":
-            self.allblinds[Unit].Set_position(Level)
+            self.allblinds[Unit].blind.Set_position(Level)
             
 
     def onNotification(self, Name, Subject, Text, Status, Priority, Sound, ImageFile):
@@ -151,13 +147,13 @@ class BasePlugin:
         Domoticz.Debug("onDisconnect called")
 
     def onHeartbeat(self):
-        Domoticz.Debug("onHeartbeat called")
-        Domoticz.Debug("Update Thread:" + str(self.update_thread))
+#        Domoticz.Debug("Update Thread:" + str(self.update_thread))
         Domoticz.Debug(str(self.countdown) + " heartbeats until next update")
         #Request an update from the blinds every once in a while, to get the battery and signal strength, even if they have not been moved. 
         if self.countdown==0:
             Domoticz.Debug("Request full update")
             self.timetoupdate=True
+            self.countdown=self.interval #reset the poll countdown when new info is received
         else:
             self.countdown=self.countdown-1
 
