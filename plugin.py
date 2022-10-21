@@ -1,5 +1,5 @@
 """
-<plugin key="MotionShades" name="Motion rolling shades by Coulisse" author="ESCape" version="2.2" externallink="https://github.com/d-EScape/MotionShades-for-Domoticz">
+<plugin key="MotionShades" name="Motion rolling shades by Coulisse" author="ESCape" version="2.3" externallink="https://github.com/d-EScape/MotionShades-for-Domoticz">
     <description>
         <h2>Motion rolling shades</h2><br/>
         See the current status of shades en control them from Domoticz. Requires a WiFi bridge for the shades and the motionblinds python module from https://github.com/starkillerOG/motion-blinds.
@@ -68,19 +68,19 @@ class BasePlugin:
         def _background_updater(self):
             Domoticz.Debug("Have not seen " + self.blind.mac+ " for a long time. Request an update.")
             try:
-                self.blind.Update()
+                self.blind.Update_trigger()
             except Exception as err:
                 Domoticz.Error("Error updating blind (" + self.blind.mac + ") status: "+str(err))
         
         def _update_domoticz(self):
             Domoticz.Debug("Update is for Domoticz unit: " + str(self.myid))
             if self.blind.position == 100:
-                statevalue=1
+                statevalue=0
             elif self.blind.position > 0:
                 statevalue=2
             else:
-                statevalue=0
-            Domoticz.Log("Updating blinds values for:" + str(self.blind.mac) + " to " + str(self.blind.position) + "%; battery voltage=" + str(self.blind.battery_voltage) + " (" + str(self.blind.battery_level) + "%)")
+                statevalue=1
+            Domoticz.Log("Updating blinds values for:" + str(self.blind.mac) + " to " + str(self.blind.position) + "%; battery voltage=" + str(self.blind.battery_voltage) + " (" + str(self.blind.battery_level) + "%)" + "; RSSI=" + str(self.blind.RSSI))
             Devices[self.myid].Update(SignalLevel=rssi_to_signal(self.blind.RSSI), BatteryLevel=int(self.blind.battery_level), nValue=int(statevalue), sValue=str(self.blind.position))   
 
         def update_handler(self):
@@ -110,7 +110,7 @@ class BasePlugin:
         self.allblinds={}
         self.interval=int(Parameters["Mode5"]) * 3600 #hours to seconds
         Domoticz.Debug("interval:" + str(self.interval))
-        self.motion_multicast = MotionMulticast()
+        self.motion_multicast = MotionMulticast(interface = "any")
         self.motion_multicast.Start_listen()
         self.gateway = MotionGateway(ip = Parameters["Address"], key = Parameters["Password"], multicast = self.motion_multicast)
         self.gateway.Update()
@@ -140,9 +140,9 @@ class BasePlugin:
 
     def onCommand(self, Unit, Command, Level, Hue):
         Domoticz.Debug("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command) + "', Level: " + str(Level))
-        if Command == "Off":
+        if Command == "Open":
             self.allblinds[Unit].blind.Open()
-        elif Command == "On":
+        elif Command == "Close":
             self.allblinds[Unit].blind.Close()
         elif Command == "Set Level":
             self.allblinds[Unit].blind.Set_position(Level)
