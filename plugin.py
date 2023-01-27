@@ -64,7 +64,7 @@ class BasePlugin:
             self.blind.Register_callback("1", self.update_handler)
             Domoticz.Debug("Registered handler for " + str(self.myid) + ": " + str(self.update_handler))
             self.update_thread = threading.Thread(name="UpdateThread", target=BasePlugin.BlindHandler._background_updater, args=(self,))
-            
+                        
         def _background_updater(self):
             Domoticz.Debug("Have not seen " + self.blind.mac+ " for a long time. Request an update.")
             try:
@@ -80,8 +80,9 @@ class BasePlugin:
                 statevalue=2
             else:
                 statevalue=1
+            domposition=100-self.blind.position
             Domoticz.Log("Updating blinds values for:" + str(self.blind.mac) + " to " + str(self.blind.position) + "%; battery voltage=" + str(self.blind.battery_voltage) + " (" + str(self.blind.battery_level) + "%)" + "; RSSI=" + str(self.blind.RSSI))
-            Devices[self.myid].Update(SignalLevel=rssi_to_signal(self.blind.RSSI), BatteryLevel=int(self.blind.battery_level), nValue=int(statevalue), sValue=str(self.blind.position))   
+            Devices[self.myid].Update(SignalLevel=rssi_to_signal(self.blind.RSSI), BatteryLevel=int(self.blind.battery_level), nValue=int(statevalue), sValue=str(domposition))   
 
         def update_handler(self):
             self.last_seen = datetime.now()            
@@ -145,7 +146,8 @@ class BasePlugin:
         elif Command == "Close":
             self.allblinds[Unit].blind.Close()
         elif Command == "Set Level":
-            self.allblinds[Unit].blind.Set_position(Level)
+            hwLevel=100-Level
+            self.allblinds[Unit].blind.Set_position(hwLevel)
             
 
     def onNotification(self, Name, Subject, Text, Status, Priority, Sound, ImageFile):
